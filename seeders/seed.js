@@ -9,17 +9,17 @@ dotenv.config();
 // ─── Jo users banana chahte ho ───────────────────────────────
 const users = [
   {
-    username: "Owner",
-    password: "Owner@1234",      // ← apna password daalo
+    username: "owner",
+    password: "Owner@123",      // ← apna password daalo
     role: "owner",
     name: "Club Owner",
     isActive: true,
   },
   {
-    username: "Mohit",
+    username: "mohit",
     password: "Mohit@1234",      // ← apna password daalo
     role: "staff",
-    name: "Rahul Singh",
+    name: "Mohit Kumar",
     isActive: true,
   },
   

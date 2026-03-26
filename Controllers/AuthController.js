@@ -32,7 +32,7 @@ const login = async (req, res) => {
     }
 
     const user = await User.findOne({
-      username: username.toLowerCase().trim(),
+      username: username.trim(),
     });
     if (!user) {
       return res
@@ -232,12 +232,10 @@ const changePassword = async (req, res) => {
         .json({ success: false, message: "Both fields are required." });
 
     if (newPassword.length < 6)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Password must be at least 6 characters.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters.",
+      });
 
     const user = await User.findById(req.user.id);
     if (!user)
