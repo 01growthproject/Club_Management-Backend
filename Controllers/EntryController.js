@@ -5,11 +5,11 @@ import sendEntryConfirmation from "../utils/sendEmail.js";
 // ─── GET All Entries ──────────────────────────────────────────
 const getAllEntries = async (req, res) => {
   try {
-    const { category, paymentMode, tableNo, date } = req.query;
+    const { category, pax, tableNo, date } = req.query;
     const filter = {};
 
     if (category) filter.category = category;
-    if (paymentMode) filter.paymentMode = paymentMode;
+    if (pax) filter.pax = pax;
     if (tableNo) filter.tableNo = Number(tableNo);
 
     if (date) {
@@ -70,9 +70,31 @@ const createEntry = async (req, res) => {
       req.body.contactNo = req.body.contactNo.replace(/\s+/g, "");
     }
 
-    const { dsAmount = 0, rsAmount = 0 } = req.body;
-    req.body.totalAmount = Number(dsAmount) + Number(rsAmount);
+    // ✅ Parse paxCounts if it's a JSON string
+    if (req.body.paxCounts && typeof req.body.paxCounts === "string") {
+      try {
+        req.body.paxCounts = JSON.parse(req.body.paxCounts);
+      } catch (e) {
+        console.error("Failed to parse paxCounts:", e);
+        req.body.paxCounts = {
+          Pax: 0,
+          "Stag Male": 0,
+          "Stag Female": 0,
+          Couple: 0,
+        };
+      }
+    }
 
+    // 💰 Parse payment amounts (totalAmount auto-calculated in pre-save hook)
+    req.body.cashAmount = Number(req.body.cashAmount) || 0;
+    req.body.upiAmount = Number(req.body.upiAmount) || 0;
+    req.body.cardAmount = Number(req.body.cardAmount) || 0;
+
+    // 🎟️ Cover amounts
+    req.body.withCover = Number(req.body.withCover) || 0;
+    req.body.withoutCover = Number(req.body.withoutCover) || 0;
+
+    // 🪑 Table number
     if (
       !req.body.tableNo ||
       req.body.tableNo === "" ||
@@ -83,17 +105,24 @@ const createEntry = async (req, res) => {
       req.body.tableNo = Number(req.body.tableNo);
     }
 
+    // ✅ Remove old pax fields to avoid validation errors
+    // Let the model use paxCounts instead
+    delete req.body.pax;
+    delete req.body.paxCount;
+
     console.log("📤 Files received:", {
       livePhoto: req.files?.livePhoto?.[0]?.originalname,
       idFront: req.files?.idFront?.[0]?.originalname,
       idBack: req.files?.idBack?.[0]?.originalname,
     });
 
-    // ✅ Manual Cloudinary Upload
+    console.log("👥 Pax Counts:", req.body.paxCounts);
+
+    // ☁️ Cloudinary uploads
     const { uploadToCloudinary } = await import("../Middlewares/upload.js");
 
     if (req.files?.livePhoto?.[0]) {
-      console.log("📸 Uploading livePhoto to Cloudinary...");
+      console.log("📸 Uploading livePhoto...");
       const result = await uploadToCloudinary(
         req.files.livePhoto[0],
         "live_photos",
@@ -101,11 +130,11 @@ const createEntry = async (req, res) => {
       );
       req.body.livePhotoUrl = result.secure_url;
       req.body.livePhotoPublicId = result.public_id;
-      console.log("✅ livePhoto uploaded:", result.secure_url);
+      console.log("✅ livePhoto:", result.secure_url);
     }
 
     if (req.files?.idFront?.[0]) {
-      console.log("🪪 Uploading idFront to Cloudinary...");
+      console.log("🪪 Uploading idFront...");
       const result = await uploadToCloudinary(
         req.files.idFront[0],
         "id_front",
@@ -113,23 +142,28 @@ const createEntry = async (req, res) => {
       );
       req.body.idFrontUrl = result.secure_url;
       req.body.idFrontPublicId = result.public_id;
-      console.log("✅ idFront uploaded:", result.secure_url);
+      console.log("✅ idFront:", result.secure_url);
     }
 
     if (req.files?.idBack?.[0]) {
-      console.log("🪪 Uploading idBack to Cloudinary...");
+      console.log("🪪 Uploading idBack...");
       const result = await uploadToCloudinary(req.files.idBack[0], "id_back", [
         { width: 800, height: 500, crop: "fit" },
       ]);
       req.body.idBackUrl = result.secure_url;
       req.body.idBackPublicId = result.public_id;
-      console.log("✅ idBack uploaded:", result.secure_url);
+      console.log("✅ idBack:", result.secure_url);
     }
 
     const entry = new Entry(req.body);
     await entry.save();
 
-    console.log("🟡 Entry created:", entry.srNo, "Contact:", entry.contactNo);
+    console.log(
+      "🟡 Entry created — SR:",
+      entry.srNo,
+      "| Contact:",
+      entry.contactNo,
+    );
 
     // 📧 Email (non-blocking)
     if (entry.email) {
@@ -143,7 +177,7 @@ const createEntry = async (req, res) => {
       });
     }
 
-    console.log("🟢 Entry saved & notifications sent");
+    console.log("🟢 Entry saved successfully");
 
     res.status(201).json({
       success: true,
@@ -183,28 +217,44 @@ const createEntry = async (req, res) => {
 // ─── PUT Update Entry ─────────────────────────────────────────
 const updateEntry = async (req, res) => {
   try {
-    // Amount recalculate
-    if (req.body.dsAmount !== undefined || req.body.rsAmount !== undefined) {
-      const existing = await Entry.findById(req.params.id);
-      if (existing) {
-        const ds =
-          req.body.dsAmount !== undefined
-            ? parseFloat(req.body.dsAmount)
-            : existing.dsAmount;
-        const rs =
-          req.body.rsAmount !== undefined
-            ? parseFloat(req.body.rsAmount)
-            : existing.rsAmount;
-        req.body.totalAmount = ds + rs;
+    // ✅ Parse paxCounts if it's a JSON string
+    if (req.body.paxCounts && typeof req.body.paxCounts === "string") {
+      try {
+        req.body.paxCounts = JSON.parse(req.body.paxCounts);
+      } catch (e) {
+        console.error("Failed to parse paxCounts:", e);
       }
     }
 
-    // ✅ Handle photo updates
+    // 💰 Recalculate totalAmount if any payment field is being updated
+    if (
+      req.body.cashAmount !== undefined ||
+      req.body.upiAmount !== undefined ||
+      req.body.cardAmount !== undefined
+    ) {
+      const existing = await Entry.findById(req.params.id);
+      if (existing) {
+        const cash =
+          req.body.cashAmount !== undefined
+            ? Number(req.body.cashAmount)
+            : existing.cashAmount;
+        const upi =
+          req.body.upiAmount !== undefined
+            ? Number(req.body.upiAmount)
+            : existing.upiAmount;
+        const card =
+          req.body.cardAmount !== undefined
+            ? Number(req.body.cardAmount)
+            : existing.cardAmount;
+        req.body.totalAmount = cash + upi + card;
+      }
+    }
+
+    // 📸 Handle photo updates
     if (req.files) {
       const existing = await Entry.findById(req.params.id);
 
-      // Update Live Photo
-      if (req.files.livePhoto && req.files.livePhoto[0]) {
+      if (req.files.livePhoto?.[0]) {
         if (existing?.livePhotoPublicId) {
           await cloudinary.uploader.destroy(existing.livePhotoPublicId);
         }
@@ -212,8 +262,7 @@ const updateEntry = async (req, res) => {
         req.body.livePhotoPublicId = req.files.livePhoto[0].filename;
       }
 
-      // Update ID Front
-      if (req.files.idFront && req.files.idFront[0]) {
+      if (req.files.idFront?.[0]) {
         if (existing?.idFrontPublicId) {
           await cloudinary.uploader.destroy(existing.idFrontPublicId);
         }
@@ -221,8 +270,7 @@ const updateEntry = async (req, res) => {
         req.body.idFrontPublicId = req.files.idFront[0].filename;
       }
 
-      // Update ID Back
-      if (req.files.idBack && req.files.idBack[0]) {
+      if (req.files.idBack?.[0]) {
         if (existing?.idBackPublicId) {
           await cloudinary.uploader.destroy(existing.idBackPublicId);
         }
@@ -268,22 +316,18 @@ const deleteEntry = async (req, res) => {
         .json({ success: false, message: "Entry not found" });
     }
 
-    // ✅ Delete all 3 photos from Cloudinary
+    // 🗑️ Delete all photos from Cloudinary
     const deletePromises = [];
-
-    if (entry.livePhotoPublicId) {
+    if (entry.livePhotoPublicId)
       deletePromises.push(cloudinary.uploader.destroy(entry.livePhotoPublicId));
-    }
-    if (entry.idFrontPublicId) {
+    if (entry.idFrontPublicId)
       deletePromises.push(cloudinary.uploader.destroy(entry.idFrontPublicId));
-    }
-    if (entry.idBackPublicId) {
+    if (entry.idBackPublicId)
       deletePromises.push(cloudinary.uploader.destroy(entry.idBackPublicId));
-    }
 
     if (deletePromises.length > 0) {
       await Promise.all(deletePromises);
-      console.log(`🗑️ All photos deleted for SR No. ${entry.srNo}`);
+      console.log(`🗑️ Photos deleted for SR No. ${entry.srNo}`);
     }
 
     res.status(200).json({

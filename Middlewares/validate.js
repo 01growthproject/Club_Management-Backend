@@ -25,17 +25,28 @@ const entryValidationRules = [
   body("entryTime")
     .notEmpty().withMessage("Entry time is required"),
 
-  body("paymentMode")
-    .notEmpty().withMessage("Payment mode is required")
-    .isIn(["UPI", "Cash", "CC"]).withMessage("Payment mode must be UPI, Cash, or CC"),
+  // ── Pax ──────────────────────────────────────────────────
+  body("pax")
+    .optional()
+    .isIn(["Pax", "Stag Male", "Stag Female", "Couple"])
+    .withMessage("Pax must be: Pax, Stag Male, Stag Female, or Couple"),
 
-  body("dsAmount")
+  body("paxCount")
     .optional({ checkFalsy: true })
-    .isFloat({ min: 0 }).withMessage("DS Amount must be a positive number"),
+    .isInt({ min: 1, max: 50 }).withMessage("Pax count must be between 1 and 50"),
 
-  body("rsAmount")
+  // ── Payment ───────────────────────────────────────────────
+  body("cashAmount")
     .optional({ checkFalsy: true })
-    .isFloat({ min: 0 }).withMessage("Rs Amount must be a positive number"),
+    .isFloat({ min: 0 }).withMessage("Cash amount must be positive"),
+
+  body("upiAmount")
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0 }).withMessage("UPI amount must be positive"),
+
+  body("cardAmount")
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0 }).withMessage("Card amount must be positive"),
 
   body("withCover")
     .optional({ checkFalsy: true })
@@ -45,6 +56,7 @@ const entryValidationRules = [
     .optional({ checkFalsy: true })
     .isFloat({ min: 0 }).withMessage("Without Cover amount must be positive"),
 
+  // ── Category & Table ──────────────────────────────────────
   body("category")
     .optional()
     .isIn(["Normal", "VIP", "VVIP"]).withMessage("Category must be Normal, VIP, or VVIP"),
