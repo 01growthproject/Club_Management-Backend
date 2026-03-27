@@ -2,12 +2,32 @@
 // ✅ UPDATED: Supports new paxCounts format
 
 import Entry from "../Models/Entry.model.js";
+import {
+  buildReportWorkbook,
+  sanitizeFilename,
+  formatDateOnly,
+} from "../utils/excelReportWorkbook.js";
 
 // ─── Helper: Date Range ───────────────────────────────────────
 const getDateRange = (dateStr) => {
-  const start = new Date(dateStr);
+  const start = new Date(`${dateStr}T00:00:00`);
   start.setHours(0, 0, 0, 0);
-  const end = new Date(dateStr);
+  const end = new Date(`${dateStr}T00:00:00`);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+/** Monday 00:00:00 — Sunday 23:59:59 (week containing `dateStr`, local calendar) */
+const getWeekRangeContaining = (dateStr) => {
+  const anchor = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(anchor.getTime())) return null;
+  const day = anchor.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const start = new Date(anchor);
+  start.setDate(anchor.getDate() + diffToMonday);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
   end.setHours(23, 59, 59, 999);
   return { start, end };
 };
@@ -266,9 +286,175 @@ const getDateRangeReport = async (req, res) => {
   }
 };
 
+// ─── GET /api/reports/weekly?date=2024-03-10 ─────────────────
+const getWeeklyReport = async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: "Date is required. Week is Mon–Sun containing this day. Format: YYYY-MM-DD",
+      });
+    }
+
+    const range = getWeekRangeContaining(date);
+    if (!range) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date",
+      });
+    }
+
+    const { start, end } = range;
+    const entries = await Entry.find({
+      createdAt: { $gte: start, $lte: end },
+    }).lean();
+
+    const weekStart = formatDateOnly(start);
+    const weekEnd = formatDateOnly(end);
+    const summary = buildSummary(entries);
+
+    res.status(200).json({
+      success: true,
+      weekStart,
+      weekEnd,
+      data: summary,
+    });
+  } catch (error) {
+    console.error("❌ Weekly Report Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+      error: error.message,
+    });
+  }
+};
+
+// ─── GET /api/reports/export/excel?period=daily|weekly|monthly ─
+const exportExcelReport = async (req, res) => {
+  try {
+    const period = (req.query.period || "").toLowerCase();
+
+    if (!["daily", "weekly", "monthly"].includes(period)) {
+      return res.status(400).json({
+        success: false,
+        message: "Query `period` must be daily, weekly, or monthly",
+      });
+    }
+
+    let entries;
+    let periodLabel;
+    let filenameBase;
+    let dailyBreakdown = null;
+
+    if (period === "daily") {
+      const { date } = req.query;
+      if (!date) {
+        return res.status(400).json({
+          success: false,
+          message: "For daily export, `date` is required (YYYY-MM-DD)",
+        });
+      }
+      const { start, end } = getDateRange(date);
+      entries = await Entry.find({
+        createdAt: { $gte: start, $lte: end },
+      })
+        .sort({ srNo: 1 })
+        .lean();
+      periodLabel = date;
+      filenameBase = `JaguarClub_daily_${date}`;
+    } else if (period === "weekly") {
+      const { date } = req.query;
+      if (!date) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "For weekly export, `date` is required (any day in the week, YYYY-MM-DD)",
+        });
+      }
+      const range = getWeekRangeContaining(date);
+      if (!range) {
+        return res.status(400).json({ success: false, message: "Invalid date" });
+      }
+      const { start, end } = range;
+      entries = await Entry.find({
+        createdAt: { $gte: start, $lte: end },
+      })
+        .sort({ srNo: 1 })
+        .lean();
+      const ws = formatDateOnly(start);
+      const we = formatDateOnly(end);
+      periodLabel = `${ws} → ${we} (Mon–Sun)`;
+      filenameBase = `JaguarClub_weekly_${ws}_to_${we}`;
+    } else {
+      const { year, month } = req.query;
+      if (!year || !month) {
+        return res.status(400).json({
+          success: false,
+          message: "For monthly export, `year` and `month` are required",
+        });
+      }
+      const y = Number(year);
+      const m = Number(month);
+      const start = new Date(y, m - 1, 1, 0, 0, 0, 0);
+      const end = new Date(y, m, 0, 23, 59, 59, 999);
+      entries = await Entry.find({
+        createdAt: { $gte: start, $lte: end },
+      })
+        .sort({ srNo: 1 })
+        .lean();
+
+      const dailyMap = {};
+      entries.forEach((e) => {
+        const day = new Date(e.createdAt).toISOString().split("T")[0];
+        if (!dailyMap[day]) dailyMap[day] = [];
+        dailyMap[day].push(e);
+      });
+      dailyBreakdown = Object.entries(dailyMap)
+        .sort(([a], [b]) => new Date(a) - new Date(b))
+        .map(([d, dayEntries]) => ({
+          date: d,
+          ...buildSummary(dayEntries),
+        }));
+
+      periodLabel = `${year}-${String(month).padStart(2, "0")}`;
+      filenameBase = `JaguarClub_monthly_${year}-${String(month).padStart(2, "0")}`;
+    }
+
+    const summary = buildSummary(entries);
+    const workbook = await buildReportWorkbook({
+      reportTitle: "Jaguar Club — Entry report",
+      periodLabel,
+      summary,
+      entries,
+      dailyBreakdown,
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const fname = sanitizeFilename(`${filenameBase}.xlsx`);
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${fname}"`);
+    return res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error("❌ Excel export error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+      error: error.message,
+    });
+  }
+};
+
 export {
   getDailyReport,
   getMonthlyReport,
+  getWeeklyReport,
   getPaymentSummary,
   getDateRangeReport,
+  exportExcelReport,
 };
