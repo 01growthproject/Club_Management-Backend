@@ -1,8 +1,6 @@
 // Controllers/AuthController.js
 
 import jwt from "jsonwebtoken";
-import bcrypt from "bcrypt";
-
 import User from "../Models/User.model.js";
 
 // ─── Generate Access Token ────────────────────────────────────
@@ -34,29 +32,33 @@ const login = async (req, res) => {
     const user = await User.findOne({
       username: username.trim(),
     });
+
     if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials" });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
 
     if (!user.isActive) {
       return res.status(403).json({
         success: false,
-        message: "Account is disabled. Contact admin.",
+        message: "Account is disabled",
       });
     }
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials" });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
 
     const accessToken = generateAccessToken(user._id, user.role);
     const refreshToken = generateRefreshToken(user._id, user.role);
 
+    // ✅ Store tokens in cookies (secure way)
     res.cookie("jc_token", accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -70,7 +72,7 @@ const login = async (req, res) => {
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: "/api/auth/refresh-token",
+      path: "/",
     });
 
     res.status(200).json({
@@ -82,12 +84,13 @@ const login = async (req, res) => {
         name: user.name,
         role: user.role,
       },
-      accessToken,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Server Error", error: error.message });
+    console.error("Login error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
 };
 
@@ -99,17 +102,18 @@ const refreshToken = async (req, res) => {
     if (!token) {
       return res.status(401).json({
         success: false,
-        message: "No refresh token. Please login again.",
+        message: "Please login again",
       });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
 
     const user = await User.findById(decoded.id).select("-password");
+
     if (!user || !user.isActive) {
       return res.status(401).json({
         success: false,
-        message: "Invalid session. Please login again.",
+        message: "Invalid session",
       });
     }
 
@@ -120,23 +124,20 @@ const refreshToken = async (req, res) => {
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       maxAge: 15 * 60 * 1000,
+      path: "/",
     });
 
     res.status(200).json({
       success: true,
-      message: "Token refreshed!",
-      accessToken: newAccessToken,
+      message: "Token refreshed",
     });
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        success: false,
-        message: "Session expired. Please login again.",
-      });
-    }
-    res
-      .status(500)
-      .json({ success: false, message: "Server Error", error: error.message });
+    console.error("Refresh error:", error);
+
+    return res.status(401).json({
+      success: false,
+      message: "Session expired, login again",
+    });
   }
 };
 
@@ -144,120 +145,176 @@ const refreshToken = async (req, res) => {
 const logout = async (req, res) => {
   try {
     res.clearCookie("jc_token", { path: "/" });
-    res.clearCookie("jc_refresh", { path: "/api/auth/refresh-token" });
-    res.status(200).json({ success: true, message: "Logged out successfully" });
+    res.clearCookie("jc_refresh", { path: "/" });
+
+    res.status(200).json({
+      success: true,
+      message: "Logged out successfully",
+    });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Server Error", error: error.message });
+    console.error("Logout error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
 };
 
 // ─── GET /api/auth/me ─────────────────────────────────────────
 const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
     }
-    res.status(200).json({ success: true, data: user });
+
+    const user = await User.findById(req.user.id).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Server Error", error: error.message });
+    console.error("GetMe error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
 };
 
-// ─── POST /api/auth/create-user (Owner only) ──────────────────
+// ─── POST /api/auth/create-user ───────────────────────────────
 const createUser = async (req, res) => {
   try {
+    // Only owner can create users
+    if (req.user?.role !== "owner") {
+      return res.status(403).json({
+        success: false,
+        message: "Only owner can create users",
+      });
+    }
+
     const { username, password, name, role } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: "Username and password are required",
+        message: "Username and password required",
+      });
+    }
+
+    // ✅ Simple password rule (no complex regex)
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
       });
     }
 
     const existingUser = await User.findOne({
       username: username.toLowerCase(),
     });
+
     if (existingUser) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Username already exists" });
+      return res.status(400).json({
+        success: false,
+        message: "Username already exists",
+      });
     }
 
-    const user = await User({
+    const ALLOWED_ROLES = ["staff", "admin"];
+    const finalRole = ALLOWED_ROLES.includes(role) ? role : "staff";
+
+    const user = new User({
       username: username.toLowerCase().trim(),
       password,
       name: name || "",
-      role: role || "staff",
+      role: finalRole,
     });
+
     await user.save();
 
     res.status(201).json({
       success: true,
-      message: `User '${user.username}' created successfully!`,
+      message: "User created successfully",
       data: {
         id: user._id,
         username: user.username,
-        name: user.name,
         role: user.role,
       },
     });
   } catch (error) {
-    if (error.code === 11000) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Username already exists" });
-    }
-    res
-      .status(500)
-      .json({ success: false, message: "Server Error", error: error.message });
+    console.error("Create user error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
 };
 
-// ─── POST /api/auth/change-password (Owner only) ─────────────
+// ─── POST /api/auth/change-password ───────────────────────────
 const changePassword = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
     const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword)
-      return res
-        .status(400)
-        .json({ success: false, message: "Both fields are required." });
-
-    if (newPassword.length < 6)
+    if (!currentPassword || !newPassword) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 6 characters.",
+        message: "Both fields required",
       });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
+    }
 
     const user = await User.findById(req.user.id);
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found." });
 
-    const isMatch = await user.comparePassword(currentPassword); // ✅ model method
-    if (!isMatch)
-      return res
-        .status(400)
-        .json({ success: false, message: "Current password is incorrect." });
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Wrong current password",
+      });
+    }
 
-    user.password = newPassword; // ✅ plain text — pre-save hook hash karega
+    user.password = newPassword;
     await user.save();
 
-    res.json({ success: true, message: "Password changed successfully." });
+    res.json({
+      success: true,
+      message: "Password changed successfully",
+    });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Server Error", error: error.message });
+    console.error("Change password error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
 };
 
-export { login, logout, getMe, createUser, refreshToken, changePassword }; // ← changePassword add kiya
+export { login, logout, getMe, createUser, refreshToken, changePassword };
