@@ -61,16 +61,16 @@ const login = async (req, res) => {
     // ✅ Store tokens in cookies (secure way)
     res.cookie("jc_token", accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: true, // 🔥 production me always true
+      sameSite: "none", // 🔥 MOST IMPORTANT
       maxAge: 15 * 60 * 1000,
       path: "/",
     });
 
     res.cookie("jc_refresh", refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: true,
+      sameSite: "none",
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: "/",
     });
