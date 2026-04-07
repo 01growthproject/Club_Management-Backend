@@ -25,7 +25,7 @@ const users = [
   },
   {
     username: "mohit",
-    password: "Mohit@1234", // ✅ CHANGED: Strong password
+    password: "Mohit@1234", 
     role: "staff",
     name: "Mohit Sharma",
     isActive: true,

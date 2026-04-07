@@ -32,7 +32,7 @@ function formatDateOnly(value) {
  * @param {string} opts.periodLabel
  * @param {object} opts.summary - from buildSummary
  * @param {object[]} opts.entries
- * @param {object[]|null} opts.dailyBreakdown - optional rows with date + summary fields
+ * @param {object[]|null} opts.dailyBreakdown - array of { date, entryCount, payments: { grandTotal, cash, upi, card }, pax: { totalPeople } }
  */
 export async function buildReportWorkbook({
   reportTitle,
